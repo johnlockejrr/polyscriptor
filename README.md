@@ -1,8 +1,7 @@
-# Sample GitLab Project
+# Slavistik GitLab Project
 
-This sample project shows how a project in GitLab looks for demonstration purposes. It contains issues, merge requests and Markdown files in many branches,
-named and filled with lorem ipsum.
+## TODO
 
-You can look around to get an idea how to structure your project and, when done, you can safely delete this project.
+1. Finetuning/pre-training des Transformer-ATR-Models TrOCR für kyrillische Schrift in unterschiedlichen Sprachen.
+2. Installation einer eScriptorium-Instanz auf dem Server des Lab.
 
-[Learn more about creating GitLab projects.](https://docs.gitlab.com/ee/gitlab-basics/create-project.html)
