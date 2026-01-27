@@ -11,4 +11,6 @@ __all__ = [
     "KrakenEngine",
     "CommercialAPIEngine",
     "PartyEngine",
+    "DeepSeekOCREngine",
+    "LightOnOCREngine",
 ]

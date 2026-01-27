@@ -210,3 +210,4 @@ inspect_*.ipynb
 
 # Gabelsberger shorthand preparation (work in progress)
 prepare_gabelsberger_shorthand.py
+*.gitlab-token

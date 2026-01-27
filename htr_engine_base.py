@@ -289,6 +289,20 @@ class HTREngineRegistry:
         except ImportError as e:
             print(f"Warning: Failed to load OpenWebUI engine: {e}")
 
+        # Import and register DeepSeek-OCR engine
+        try:
+            from engines.deepseek_ocr_engine import DeepSeekOCREngine
+            self.register(DeepSeekOCREngine())
+        except ImportError as e:
+            print(f"Warning: Failed to load DeepSeek-OCR engine: {e}")
+
+        # Import and register LightOnOCR engine
+        try:
+            from engines.lighton_ocr_engine import LightOnOCREngine
+            self.register(LightOnOCREngine())
+        except ImportError as e:
+            print(f"Warning: Failed to load LightOnOCR engine: {e}")
+
     def get_available_engines(self) -> List[HTREngine]:
         """Get list of engines with satisfied dependencies.
 

@@ -107,6 +107,20 @@ ENGINE_CONFIG = {
         'batch_size_range': (1, 1),
         'speed_estimate': 2,  # API latency dependent
         'warning': 'API-based: Requires API key from openwebui.uni-freiburg.de. Rate limits may apply.'
+    },
+    'DeepSeek-OCR': {
+        'min_device': 'cuda',
+        'default_batch_size': 4,
+        'batch_size_range': (1, 8),
+        'speed_estimate': 8,
+        'warning': 'PAGE-LEVEL model (~6GB VRAM). Requires flash-attn for optimal performance.'
+    },
+    'LightOnOCR': {
+        'min_device': 'cuda',
+        'default_batch_size': 16,
+        'batch_size_range': (8, 32),
+        'speed_estimate': 25,
+        'warning': 'LINE-LEVEL model (~4GB VRAM). Requires transformers from git source.'
     }
 }
 
@@ -144,7 +158,7 @@ Shared Server Notice:
     parser.add_argument('--input-folder', type=Path, required=True,
                        help='Folder containing input images')
     parser.add_argument('--engine', type=str, required=True,
-                       help='HTR engine (PyLaia, TrOCR, Churro, Qwen3-VL, Party, Kraken, OpenWebUI)')
+                       help='HTR engine (PyLaia, TrOCR, Churro, Qwen3-VL, Party, Kraken, OpenWebUI, DeepSeek-OCR, LightOnOCR)')
 
     # Model selection
     model_group = parser.add_mutually_exclusive_group()
@@ -213,6 +227,26 @@ Shared Server Notice:
                        help='API key for OpenWebUI (or set OPENWEBUI_API_KEY env var)')
     parser.add_argument('--max-tokens', type=int, default=500,
                        help='Max tokens for API response (OpenWebUI, default: 500)')
+
+    # DeepSeek-OCR-specific
+    parser.add_argument('--ocr-mode', type=str, choices=['document', 'free'], default='document',
+                       help='DeepSeek OCR mode: document (with layout) or free (plain text)')
+    parser.add_argument('--strip-markdown', action='store_true', default=False,
+                       help='Strip markdown formatting from DeepSeek output')
+    parser.add_argument('--base-size', type=int, default=1024,
+                       help='DeepSeek base size for patch resolution (512-2048, default: 1024)')
+    parser.add_argument('--image-size', type=int, default=768,
+                       help='DeepSeek image size for output resolution (512-1024, default: 768)')
+    parser.add_argument('--crop-mode', action='store_true', default=True,
+                       help='Enable crop mode for DeepSeek (default: True)')
+    parser.add_argument('--no-crop-mode', action='store_false', dest='crop_mode',
+                       help='Disable crop mode for DeepSeek')
+
+    # LightOnOCR-specific
+    parser.add_argument('--longest-edge', type=int, default=700,
+                       help='LightOnOCR longest edge for image resize (512-1024, default: 700)')
+    parser.add_argument('--max-new-tokens', type=int, default=256,
+                       help='LightOnOCR max new tokens (64-512, default: 256)')
 
     # Safety flags
     parser.add_argument('--i-understand-this-is-slow', action='store_true',
@@ -630,6 +664,22 @@ class BatchHTRProcessor:
         # OpenWebUI uses model_id as 'model'
         if self.args.engine == 'OpenWebUI' and self.args.model_id:
             config['model'] = self.args.model_id
+
+        # DeepSeek-OCR-specific
+        if self.args.engine == 'DeepSeek-OCR':
+            config['ocr_mode'] = self.args.ocr_mode
+            config['strip_markdown'] = self.args.strip_markdown
+            config['base_size'] = self.args.base_size
+            config['image_size'] = self.args.image_size
+            config['crop_mode'] = self.args.crop_mode
+
+        # LightOnOCR-specific
+        if self.args.engine == 'LightOnOCR':
+            config['longest_edge'] = self.args.longest_edge
+            config['max_new_tokens'] = self.args.max_new_tokens
+            # Custom prompt support (reuses --prompt flag)
+            if self.args.prompt:
+                config['custom_prompt'] = self.args.prompt
 
         return config
 
