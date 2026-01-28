@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QFontDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRectF, QPointF, QSettings
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont, QAction
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QPen, QColor, QFont, QAction, QShortcut, QKeySequence
 
 # Import segmentation components
 from inference_page import LineSegmenter, PageXMLSegmenter, LineSegment
@@ -411,6 +411,10 @@ class TranscriptionGUI(QMainWindow):
         self.comparison_widget: Optional[ComparisonWidget] = None
         self.comparison_mode_active: bool = False
 
+        # Multi-page navigation state
+        self.image_list: List[Path] = []
+        self.current_image_index: int = -1
+
         # Cache config widgets to prevent deletion
         self.config_widgets_cache: Dict[str, QWidget] = {}
 
@@ -456,10 +460,12 @@ class TranscriptionGUI(QMainWindow):
         self.image_view = ZoomableGraphicsView()
         left_layout.addWidget(self.image_view)
 
-        # Image controls
+        # Image controls - row 1: load and segmentation
         img_controls = QHBoxLayout()
-        btn_load = QPushButton("Load Image")
-        btn_load.clicked.connect(self.load_image)
+        btn_load = QPushButton("Load Images...")
+        btn_load.clicked.connect(self._load_images)
+        btn_load.setToolTip("Select one or more images to process (Ctrl+O)")
+        QShortcut(QKeySequence("Ctrl+O"), self, self._load_images)
         img_controls.addWidget(btn_load)
 
         btn_segment = QPushButton("Segment Lines")
@@ -471,6 +477,28 @@ class TranscriptionGUI(QMainWindow):
         img_controls.addWidget(btn_fit)
 
         left_layout.addLayout(img_controls)
+
+        # Image navigation - row 2: prev/next buttons and page counter
+        nav_controls = QHBoxLayout()
+
+        self.btn_prev_image = QPushButton("< Prev")
+        self.btn_prev_image.clicked.connect(self._load_previous_image)
+        self.btn_prev_image.setEnabled(False)
+        self.btn_prev_image.setToolTip("Previous image (PageUp)")
+        nav_controls.addWidget(self.btn_prev_image)
+
+        self.lbl_image_index = QLabel("No images loaded")
+        self.lbl_image_index.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_image_index.setMinimumWidth(100)
+        nav_controls.addWidget(self.lbl_image_index, stretch=1)
+
+        self.btn_next_image = QPushButton("Next >")
+        self.btn_next_image.clicked.connect(self._load_next_image)
+        self.btn_next_image.setEnabled(False)
+        self.btn_next_image.setToolTip("Next image (PageDown)")
+        nav_controls.addWidget(self.btn_next_image)
+
+        left_layout.addLayout(nav_controls)
 
         # Add left panel to main splitter
         self.main_splitter.addWidget(left_panel)
@@ -939,20 +967,33 @@ class TranscriptionGUI(QMainWindow):
             self.status_bar.showMessage("Failed to load model")
             QMessageBox.warning(self, "Error", "Failed to load model. Check console for details.")
 
-    def load_image(self):
-        """Load an image file."""
-        file_path, _ = QFileDialog.getOpenFileName(
+    def _load_images(self):
+        """Open file dialog to select one or more images."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select Image",
+            "Select Images",
             "",
             "Images (*.png *.jpg *.jpeg *.tif *.tiff *.bmp);;All Files (*)"
         )
 
-        if not file_path:
+        if not file_paths:
             return
 
+        # Store image list and set index to first image
+        self.image_list = [Path(p) for p in file_paths]
+        self.current_image_index = 0
+        self._display_current_image()
+        self._update_navigation_ui()
+
+    def _display_current_image(self):
+        """Display the image at current_image_index."""
+        if not self.image_list or self.current_image_index < 0:
+            return
+
+        file_path = self.image_list[self.current_image_index]
+
         try:
-            self.current_image_path = Path(file_path)
+            self.current_image_path = file_path
             self.current_image = Image.open(file_path).convert("RGB")
 
             # Display image
@@ -964,16 +1005,50 @@ class TranscriptionGUI(QMainWindow):
 
             self.image_view.set_image(pixmap)
 
-            self.status_bar.showMessage(f"Loaded: {file_path}")
+            self.status_bar.showMessage(f"Loaded: {file_path.name}")
             self.line_segments = []
             self.transcriptions = []
             self.transcription_text.clear()
+            self.stats_panel.clear()
 
             # Update button state after loading image
             self.update_process_button_state()
 
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Failed to load image: {e}")
+
+    def _load_previous_image(self):
+        """Navigate to the previous image in the list."""
+        if self.current_image_index > 0:
+            self.current_image_index -= 1
+            self._display_current_image()
+            self._update_navigation_ui()
+
+    def _load_next_image(self):
+        """Navigate to the next image in the list."""
+        if self.current_image_index < len(self.image_list) - 1:
+            self.current_image_index += 1
+            self._display_current_image()
+            self._update_navigation_ui()
+
+    def _update_navigation_ui(self):
+        """Update navigation buttons and page counter label."""
+        if not self.image_list:
+            self.lbl_image_index.setText("No images loaded")
+            self.btn_prev_image.setEnabled(False)
+            self.btn_next_image.setEnabled(False)
+            return
+
+        total = len(self.image_list)
+        current = self.current_image_index + 1
+
+        self.lbl_image_index.setText(f"{current} / {total}")
+        self.btn_prev_image.setEnabled(self.current_image_index > 0)
+        self.btn_next_image.setEnabled(self.current_image_index < total - 1)
+
+    def load_image(self):
+        """Legacy method - redirects to _load_images for backwards compatibility."""
+        self._load_images()
 
     def _on_seg_method_changed(self, index):
         """Handle segmentation method change."""
@@ -1346,6 +1421,21 @@ class TranscriptionGUI(QMainWindow):
 
         except Exception as e:
             print(f"Warning: Failed to restore settings: {e}")
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts for navigation."""
+        key = event.key()
+
+        # Only handle PageUp/PageDown for navigation (arrow keys are reserved
+        # for text cursor movement in the transcription QTextEdit)
+        if key == Qt.Key.Key_PageUp:
+            if self.btn_prev_image.isEnabled():
+                self._load_previous_image()
+        elif key == Qt.Key.Key_PageDown:
+            if self.btn_next_image.isEnabled():
+                self._load_next_image()
+        else:
+            super().keyPressEvent(event)
 
     def closeEvent(self, event):
         """Handle window close."""
