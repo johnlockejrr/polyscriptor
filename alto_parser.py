@@ -60,8 +60,17 @@ class AltoParser:
         self.metadata = []
 
     def parse_coords(self, points_str: str) -> List[Tuple[int, int]]:
-        """Parse POINTS string from ALTO XML (space-separated 'x y x y ...')."""
+        """Parse POINTS string from ALTO XML. Supports both formats:
+        - Space-separated: 'x1 y1 x2 y2 ...'
+        - Comma-separated pairs (PAGE-style): 'x1,y1 x2,y2 ...'
+        """
         values = points_str.split()
+        if not values:
+            return []
+        # Check first token: if it contains a comma, treat as "x,y x,y" format
+        if ',' in values[0]:
+            return [(int(p.split(',')[0]), int(p.split(',')[1])) for p in values]
+        # Otherwise "x y x y ..."
         return [(int(values[i]), int(values[i + 1])) for i in range(0, len(values), 2)]
 
     def get_bounding_box(self, coords: List[Tuple[int, int]]) -> Tuple[int, int, int, int]:
@@ -69,6 +78,34 @@ class AltoParser:
         xs = [p[0] for p in coords]
         ys = [p[1] for p in coords]
         return min(xs), min(ys), max(xs), max(ys)
+
+    def _get_line_text(self, text_line: ET.Element) -> str:
+        """Get full line text from ALTO TextLine. Supports both:
+        - Line-level: single String CONTENT with full line.
+        - Word-level: multiple String CONTENT + SP (space) children, concatenated in order.
+        """
+        # ALTO namespace for tag comparison (ElementTree uses {uri}LocalName)
+        alto_uri = self.NS['alto']
+        string_tag = f'{{{alto_uri}}}String'
+        sp_tag = f'{{{alto_uri}}}SP'
+        parts = []
+        for child in text_line:
+            tag = child.tag if isinstance(child.tag, str) else ''
+            if tag == string_tag:
+                content = child.get('CONTENT')
+                if content is not None:
+                    parts.append(content)
+            elif tag == sp_tag:
+                parts.append(' ')
+        text = ''.join(parts).strip()
+        # If no word-level content, fall back to first String only (line-level ALTO)
+        if not text:
+            string_elem = text_line.find('alto:String', self.NS)
+            if string_elem is not None:
+                content = string_elem.get('CONTENT')
+                if content is not None:
+                    text = content.strip()
+        return text
 
     def normalize_background_image(self, image: Image.Image) -> Image.Image:
         """Normalize background to light gray (similar to Efendiev dataset)."""
@@ -133,39 +170,45 @@ class AltoParser:
             print(f"Error opening image {image_path}: {e}")
             return lines_data
 
-        # ALTO: TextBlock -> TextLine; each TextLine has Shape/Polygon and String
+        # ALTO: TextBlock -> TextLine; polygon from Shape/Polygon or from line HPOS,VPOS,WIDTH,HEIGHT
         for text_block in root.findall('.//alto:TextBlock', self.NS):
             block_id = text_block.get('id', 'unknown')
 
             for idx, text_line in enumerate(text_block.findall('alto:TextLine', self.NS)):
                 line_id = text_line.get('id', f'{block_id}_line_{idx}')
 
-                # ALTO: polygon in Shape/Polygon POINTS="x1 y1 x2 y2 ..."
+                # ALTO: polygon from Shape/Polygon POINTS, or from TextLine HPOS,VPOS,WIDTH,HEIGHT (word-string ALTO)
+                coords = None
                 shape = text_line.find('alto:Shape', self.NS)
                 polygon = shape.find('alto:Polygon', self.NS) if shape is not None else None
                 if polygon is None:
                     polygon = text_line.find('alto:Shape/alto:Polygon', self.NS)
-                if polygon is None:
-                    continue
-
-                points_str = polygon.get('POINTS')
-                if not points_str:
-                    continue
-
-                coords = self.parse_coords(points_str)
-                if len(coords) < 3:
+                if polygon is not None:
+                    points_str = polygon.get('POINTS')
+                    if points_str:
+                        coords = self.parse_coords(points_str)
+                if coords is None or len(coords) < 3:
+                    # Fallback: build 4-point polygon from line bounding box (HPOS, VPOS, WIDTH, HEIGHT)
+                    hpos = text_line.get('HPOS')
+                    vpos = text_line.get('VPOS')
+                    w = text_line.get('WIDTH')
+                    h = text_line.get('HEIGHT')
+                    if hpos is not None and vpos is not None and w is not None and h is not None:
+                        try:
+                            x0, y0 = int(hpos), int(vpos)
+                            x1, y1 = x0 + int(w), y0 + int(h)
+                            coords = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+                        except (ValueError, TypeError):
+                            pass
+                if coords is None or len(coords) < 3:
                     continue
 
                 x1, y1, x2, y2 = self.get_bounding_box(coords)
 
-                # ALTO: text in String CONTENT="..."
-                string_elem = text_line.find('alto:String', self.NS)
-                if string_elem is None:
+                # ALTO: text from single String CONTENT (line-level) or from multiple String + SP (word-level)
+                text = self._get_line_text(text_line)
+                if not text:
                     continue
-                text = string_elem.get('CONTENT')
-                if text is None or not text.strip():
-                    continue
-                text = text.strip()
 
                 if (x2 - x1) < self.min_line_width:
                     continue
